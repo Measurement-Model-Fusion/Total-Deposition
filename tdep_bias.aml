@@ -1,0 +1,124 @@
+/* Estimates the bias between CMAQ and monitoring networks
+
+&args type routine options:REST
+ &severity &error &fail
+
+  &type [close -all]
+
+  &if [null %routine%]  &then 
+    &return &error USAGE: &r %AML$FILE%  <season|week> <grids|maps>
+    
+
+  &type ***************************************************
+  &ty  Running %AML$FILE% for %options%
+  &type ***************************************************
+
+  &s oratable = TDEP.CMAQ_BIAS_%type%
+  &s home = /data/arc/tdep
+  &s dir$bias = %home%/bias
+  &s cellsize = 12000
+
+  &s weekfrom = 1
+  &s weekto = 52
+  
+  &s varlist = CA CL HNO3 K MG NA NH3 NH4 NO3 SO2 SO4
+    &s varlist = CL
+
+  &if ^ [exists %dir$bias% -dir] &then
+    &sys mkdir -p %dir$bias%
+
+  &if ^ [null %options%]  &then 
+    &do opt &LIST [unquote %options%]
+	  &ty Setting %opt%
+	  &s [unquote [subst %opt% = ' '] ]
+    &end
+
+  &s season$do = &LIST WI SP SU FA
+  &s week$do = = %weekfrom% &to %weekto%
+  &s periods = [value %type%$do]
+  
+  &ty %periods%
+
+  &call %routine%
+       
+&return  
+
+/**************************************************************************
+&routine GRIDS
+
+  &do period %periods%
+
+  &s gridvar = log_ratio
+  
+  &if ^ [exists %dir$bias%/%period% -work] &then
+      &sys arc createworkspace %dir$bias%/%period%
+      
+    &workspace %dir$bias%/%period%
+
+    &do var &LIST %varlist%
+       &if [EXISTS arcerror -FILE] &then
+          &return &error
+
+       &s grid$logbias = log%var%
+       &s grid$bias = %var%
+       &s pointcov = %grid$bias%c
+       &s opt = smooth method=idw cellsize=12000 max_radius=1000000
+              
+       /* Create a point coverage from Oracle table
+       &s where = variable=[quote %var%] %type%=[quote %period%] 
+
+       &if [exists %pointcov% -cov] &then
+         &sys arc kill %pointcov% all
+
+       &if ^ [exists %pointcov% -cov] &then
+         &run ora2cov %oratable% %pointcov% site_num latitude longitude %where%
+
+       /* Create a surface of biases from point coverage
+       &if [exists %grid$logbias% -grid] &then
+         &sys arc kill %grid$logbias%
+
+       &if [exists %grid$bias% -grid] &then
+         &sys arc kill %grid$bias%
+
+       &run gridcov %pointcov% %gridvar% %grid$logbias% %opt%
+         
+       &if ^ [exists %grid$logbias% -grid] &then
+         &return &error *** ERROR: %grid$logbias% was not successful
+
+       /* Now transform the logbias
+       &data arc grid
+             setcell MINOF
+             %grid$bias% = POW(10, %grid$logbias%)
+             quit
+       &end
+
+       &if ^ [exist %grid$bias% -grid] &then
+         &return &error ERROR: %grid$bias% was not successful
+
+	&end /* var
+
+  &end /* period
+
+  &workspace %home%
+
+&return 
+
+
+/**********************************************
+&routine MAPS
+
+  /* Plots model bias 
+  &workspace %home%/bias
+  &s label = medratio
+  
+  &do period %periods%
+    &do var &LIST %varlist%
+      &s grid = %period%/%var%
+      &s cov = %grid%c
+      &s root = %var%-%period%
+      &r mapgrid %grid% l0u2sp2 shadeset=blue2red map$root=%root% pointcov=%cov% label=%label%
+    &end
+  &end
+
+&return
+

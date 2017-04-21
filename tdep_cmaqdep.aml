@@ -1,0 +1,130 @@
+/* TDEP_CMAQDEP.AML
+/* Creates total deposition grids from weekly particle deposition 
+/* Units are in kg-molecule/ha
+
+
+/*----------------------------------------------------------
+/* Initial variables
+/*----------------------------------------------------------
+
+  &args yearfrom yearto options:REST
+
+  &severity &error &fail
+
+  &if [null %yearfrom% ] &then 
+    &call USAGE
+
+  &if [null %yearto%]  &then 
+    &s yearto = %yearfrom%
+
+  &s weekfrom = 1
+  &s weekto = 52
+  
+  &r ora
+
+  &call CONSTANTS
+  
+  /* Define base variables
+  &s home      := /data/arc/tdep
+
+  &if ^ [null %options%]  &then 
+    &call OPTIONS
+  
+  &do year := %yearfrom% &to %yearto%
+    &type ***************************************************
+    &ty %year%
+    &type ***************************************************
+
+    &do week = %weekfrom% &to %weekto%
+
+		&if [EXISTS %home%/arcerror -FILE] &then
+			&return &error
+
+		&ty ---------------------------------------------------
+		&ty WEEK=%year% %week% 
+		&ty ---------------------------------------------------
+    
+		&s dir$cmaq	=  %home%/cmaq/ddep/%year%/%week%
+
+		&workspace %dir$cmaq%
+		
+		&call TOTAL_GRIDS
+	  
+    &end /* do week
+  &end /* year
+
+  &workspace %home%
+
+&return %AML$FILE% done...
+  
+/**************************************************************************
+&routine TOTAL_GRIDS
+
+  &data arc grid
+     setcell MINOF
+     setwindow %xmin% %ymin% %xmax% %ymax%
+
+	ca = acaj + acak
+	cl = aclj + aclk
+	k = akj + akk
+	mg = amgj + amgk
+	na = anaj + anak
+	nh4 = anh4i + anh4j + anh4k
+	no3 = ano3i + ano3j + ano3k
+	so4 = aso4i + aso4j + aso4k
+     quit
+  &end
+
+  &if ^ [exists so4 -GRID] &then
+    &return &error ERROR: grid failed
+
+&return
+
+
+/**************************************************************************
+&routine CONSTANTS
+ 
+  &ty Setting constants 
+  
+  /* Set grid constants
+  &s cellsize = 12000 
+  &s power = 1  
+
+  /* Define the ALBERT boundaries for the grid 
+  &setvar xmin := -2400000.00
+  &setvar ymin :=   170000.00
+  &setvar xmax :=  2400000.00
+  &setvar ymax :=  3300000.00
+
+&return /* CONSTANTS
+
+
+
+/**************************************************************************
+&routine USAGE
+/**************************************************************************
+
+  &severity &error &fail
+  &type USAGE: %AML$FILE% <yearfrom> {yearto} {aconc|ions} {options}
+  &type     Variables:  hno3 nh4 no3 so2 so4 nh3 | ca mg na k cl
+  &type     OPtions: newweights newpoints
+
+&return &error 
+
+/**************************************************************************
+&routine OPTIONS
+
+  &s options = [LOCASE %options%]
+
+    /* replace variables with any options 
+  &do opt &LIST [unquote %options%]
+    &ty Setting %opt%
+    &s [unquote [subst %opt% = ' '] ]
+  &end
+
+&return  
+
+
+
+
+

@@ -1,0 +1,252 @@
+/* TDEP_CONC.AML
+/* Creates grids for weekly concentrations from monitoring networks
+/*   and weighting factors for measured and CMAQ 
+
+/*----------------------------------------------------------
+/* TO DO:
+/*   Create the grid weighting here instead of tdep_combine
+
+/*----------------------------------------------------------
+/* Initial variables:
+/*----------------------------------------------------------
+
+  &args yearfrom yearto options:REST
+
+  &severity &error &fail
+
+  &if [null %yearfrom%]  &then 
+    &call USAGE
+
+  &if [null %yearto%]  &then 
+    &s yearto = %yearfrom%
+
+  &s weekfrom = 1
+  &s weekto = 52
+  
+  &r ora
+
+  &call CONSTANTS
+  &call RADIUS
+  
+  /* Define base variables
+  &s home      := /data/arc/tdep
+  &s basecov     := %.source%/us48
+  &s ora$conc 	 := TDEP.MEASURED_WEEK
+
+  /*  We add NH3 later depending on the year
+  &s varlist     :=  so2 hno3 no3 nh4 so4 ca mg na k cl
+
+  &if ^ [null %options%]  &then 
+    &call OPTIONS
+  
+  &do year := %yearfrom% &to %yearto%
+    &type ***************************************************
+    &ty %year%
+    &type ***************************************************
+
+    &s dir$conc	=  %home%/conc/%year%
+
+    &if ^ [EXISTS %dir$conc% -dir] &then
+      &sys mkdir -p %dir$conc%
+
+    /* Add NH3 after AmoN started
+    &if %year% > 2009 &then
+      &s vars = %varlist% nh3
+    &else
+      &s vars = %varlist%
+
+    &do week = %weekfrom% &to %weekto%
+
+      &if [EXISTS %home%/arcerror -FILE] &then
+            &return &error
+
+	  &ty ---------------------------------------------------
+      &ty WEEK=%year% %week% 
+      &ty ---------------------------------------------------
+      
+      &s workspace   :=  %dir$conc%/%week%
+
+      &if ^ [EXISTS %workspace% -work] &then
+        &sys arc createworkspace %workspace%
+
+      &workspace %workspace%  
+	  
+	  &call SEASON
+
+      &do var &LIST %vars%
+
+        &s ora$var = [upcase %var%]
+        &s pointcov = %var%cov
+        &s conc$grid = %var%
+        &s conc$wt = %var%wtm
+        &s cmaq$wt = %var%wtq
+		&s radius = [value %var%$%season%]
+        
+        &ty *** WEEK=%year% %week% VAR=%ora$var% ***
+
+        &if ^ [exists %pointcov% -cov] or [variable force] &then 
+          &call POINTCOV
+
+        &if ^ [exists %conc$wt% -grid] or [variable force] &then 
+          &call WEIGHT_POINTS
+
+        &if ^ [exists %conc$grid% -grid]  or [variable force] &then 
+          &run gridcov %pointcov% %conc$grid% %ora$var% max_radius=%radius% cellsize=%cellsize%
+
+        &type gridcov %pointcov% %conc$grid% %ora$var% max_radius=%radius% cellsize=%cellsize%
+
+        &if ^ [exists %conc$grid% -grid]  &then 
+          &return &error ERROR: %conc$grid% failed
+
+      &end /* do var
+    &end /* do week
+  &end /* year
+
+  &workspace %home%
+
+&return %AML$FILE% done...
+  
+
+/**************************************************************************
+&routine POINTCOV
+	/* Create point coverage which is then interpolated to grids
+      
+   &s dataview = tmp_%var%_%year%%week%_vw
+   &type Creating point coverage %pointcov% from %dataview% ...
+
+    &if [exists %pointcov% -cov]  &then 
+      &sys arc kill %pointcov%
+    
+      dbmsexecute oracle
+        CREATE OR REPLACE VIEW %dataview% AS
+        SELECT id, site_id, latitude, longitude, conc AS %ora$var%
+         FROM %ora$conc%  
+         WHERE variable=[quote %ora$var%] AND year=%year% AND week=%week% 
+        end
+
+      &run ora2cov %dataview% %pointcov% id latitude longitude 
+
+      dbmsexecute oracle DROP VIEW %dataview%
+      
+&return /* Make_Pointcov
+
+/**************************************************************************
+&routine WEIGHT_POINTS
+
+  &type Making grid weighting
+  
+  &if ^ [exists %pointcov% -cov] &then
+    &return &error *** ERROR: %pointcov% doesnt exist ***
+  
+  &s distgrid = %dir$conc%/%week%/distgrid  
+
+  &do gridname &LIST %conc$wt% %distgrid% %distgrid%0 %cmaq$wt%
+	&if [exists %gridname% -grid] &then
+		&sys arc kill %gridname%
+  &end /* do gridname
+    
+  &data arc grid
+    setwindow %xmin% %ymin% %xmax% %ymax%
+     /* Get the distance of the gridcell to the nearest concentration site
+    %distgrid%0 = pointdist(%pointcov%,#,%cellsize%,min_dist,circle,%radius%)
+     /* set distance to zero if less than cellsize
+    %distgrid% = CON( %distgrid%0 <= %cellsize% , 0, %distgrid%0 )
+         
+         /* Calculate the weighting of each cell for the two grids
+    %conc$wt% =  CON( ISNULL(%distgrid%),0, POW( (1 - %distgrid% / %radius%),%power%) )
+	%cmaq$wt% = 1 - %conc$wt%
+
+     kill %distgrid%0
+     kill %distgrid%
+     quit
+  &end
+
+&return 
+
+/**************************************************************************
+&routine RADIUS
+	/* Get the radius of influence for each variable and season
+
+  &s sql = SELECT var, season, value FROM tdep.variable_influence_v
+  
+  dbmscursor curr declare oracle %sql%
+  dbmscursor curr open
+
+  &if %:curr.AML$NSEL% = 0 &then
+    &return **** ERROR:  %analyte% is not in %analyte_tbl% ****
+
+  &do &while %:curr.AML$NEXT%
+    &setvar %:curr.var%$%:curr.season% = %:curr.value%
+	&ty %:curr.var%$%:curr.season% = [value %:curr.var%$%:curr.season%]
+    dbmscursor curr NEXT
+  &end 
+
+ dbmscursor curr close
+ dbmscursor curr remove
+
+&return /* season
+
+/**************************************************************************
+&routine SEASON
+	/* Get the season for each week
+
+  &if %week% < 10 or %week% > 48 &then
+    &s season = wi
+  &if %week% >= 10 and %week% <= 22 &then
+    &s season = sp
+  &if %week% >= 23 and %week% <= 35 &then
+    &s season = su
+  &if %week% >= 36 and %week% <= 48 &then
+    &s season = fa
+
+  &if ^ [variable season] &then
+    &return &error ERROR: no matching season for week=%week%
+
+&return /* season
+
+/**************************************************************************
+&routine CONSTANTS
+ 
+  &ty Setting constants 
+  
+  /* Set constants
+  &s cellsize = 12000 
+  &s power = 1  
+
+  /* Define the ALBERT boundaries for the grid 
+  &setvar xmin := -2400000.00
+  &setvar ymin :=   170000.00
+  &setvar xmax :=  2400000.00
+  &setvar ymax :=  3300000.00
+
+&return /* CONSTANTS
+
+
+/**************************************************************************
+&routine USAGE
+/**************************************************************************
+
+  &severity &error &fail
+  &type USAGE: %AML$FILE% <yearfrom> {yearto} {options}
+  &type     Variables:  hno3 nh4 no3 so2 so4 nh3 ca mg na k cl
+  &type     OPtions: newweights newpoints
+
+&return &error 
+
+/**************************************************************************
+&routine OPTIONS
+
+  &s options = [LOCASE %options%]
+
+    /* replace variables with any options 
+  &do opt &LIST [unquote %options%]
+    &ty Setting %opt%
+    &s [unquote [subst %opt% = ' '] ]
+  &end
+
+&return  
+
+
+
+
+

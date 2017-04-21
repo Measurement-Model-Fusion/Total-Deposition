@@ -1,0 +1,195 @@
+/* Adjust CMAQ grids by seasonal bias grids
+
+&args yearfrom yearto options:REST
+ &severity &error &fail
+
+  &if [null %yearfrom%]  &then 
+    &return &error USAGE: &r tdep_adjust <yearfrom> <yearto> {options}
+
+  &if [null %yearto%]  &then 
+    &s yearto = %yearfrom%
+
+/*----------------------------------------------------------
+/* Initial variables:
+/*----------------------------------------------------------
+
+  &s home = /data/arc/tdep
+  &s cellsize = 12000 
+  &s varlist = so2 hno3 nh4 no3 so4 nh3 ca mg na k cl
+  &s varlist = ca mg na k cl nh3
+
+  &s weekfrom = 1
+  &s weekto = 52
+  
+  &if ^ [null %options%]  &then 
+    &do opt &LIST [unquote %options%]
+	  &ty Setting %opt%
+	  &s [unquote [subst %opt% = ' '] ]
+    &end
+
+  &workspace %home%
+
+  &do year := %yearfrom% &to %yearto%
+    &type ***************************************************
+    &ty %year%
+    &type ***************************************************
+	&do week := %weekfrom% &to %weekto%
+	   &if [EXISTS arcerror -FILE] &then
+          &return &error
+	
+		&s dir$bias = bias/%week%
+		&s dir$cmaq = cmaq/ddep/%year%/%week%
+		&s dir$out = cmaq/ddadj/%year%/%week%
+
+		&if ^ [exist %dir$out% -dir] &then
+			 &sys mkdir -p %dir$out%
+
+		&if ^ [exist %dir$out% -WORK] &then
+		  &sys arc createworkspace %dir$out%
+
+		&call VARIABLE_LISTS
+		
+		&if [variable test] &then
+			&ty %cmd%
+		&else 
+			&call ADJUST
+
+	&end /* week
+
+  &end /* year
+       
+&return  
+
+/**************************************************************************
+&routine ADJUST
+
+/* Remove existing adjusted grids 
+	&do grid &LIST %out$list%
+		&if [exists %grid% -grid] &then
+			&sys arc kill %grid% all
+	&end /* do
+
+	&data arc grid
+		setcell %cellsize%
+		%grid$cmd%
+		quit
+	&end
+
+/* Check to make sure all grids were successfull
+	&do grid &LIST %out$list%
+		&if ^ [exist %grid% -grid] &then
+			&return &error ERROR: %grid% not successfull
+	&end /* do
+
+&return /* adjust
+
+/**************************************************************************
+&routine VARIABLE_LISTS
+
+    &s grid$cmd = 
+    &s out$list =
+	
+	&do var &LIST %varlist%
+	
+      &s grid$cmaq = %dir$cmaq%/%var%
+	  &s grid$bias = %dir$bias%/%var%
+      &s grid$out = %dir$out%/%var%
+
+	  &do grid &LIST %grid$cmaq% %grid$bias% 
+		&if ^ [exist %grid% -grid] &then
+			&ty *** WARNING:  %grid% not found ***
+	  &end /* do
+	  
+	  &if %var% = nh3 &then
+		&s grid$bias = 1
+
+	 &s grid$cmd = %grid$cmd% ';' %grid$out% = %grid$cmaq% / %grid$bias% 
+	 &s out$list = %out$list% %grid$out% 
+
+    &end /* var
+	
+	&s grid$cmd = [unquote %grid$cmd%]
+
+&return /* adjust
+
+/**************************************************************************
+/*  Old and unused routines
+/**************************************************************************
+&routine ADJUST_OLD
+
+	&do var &LIST %varlist%
+	   &if [EXISTS arcerror -FILE] &then
+          &return &error
+	
+      &s grid$cmaq = %dir$cmaq%/%var%
+	  &s grid$bias = %dir$bias%/%var%
+      &s grid$out = %dir$out%/%var%
+
+	  &do grid &LIST %grid$cmaq% %grid$bias% 
+		&if ^ [exist %grid% -grid] &then
+			&ty *** WARNING:  %grid% not found ***
+	  &end
+	  
+	  &if %var% = nh3 &then
+		&s grid$bias = 1
+		
+	  &if [variable test] &then
+		&ty CMAQ=%grid$cmaq% BIAS=%grid$bias% OUT=%grid$out%
+	  &else 
+		&do
+		   &if [exists %grid$out% -grid] &then
+			 &sys arc kill %grid$out% all
+
+		   &data arc grid
+			 setcell %cellsize%
+			 %grid$out% = %grid$cmaq% / %grid$bias%
+			 quit
+		   &end
+
+		   &if ^ [exists %grid$out% -grid] &then
+			 &return &error ERROR: %grid$out% not successfull
+		&end
+
+    &end /* var
+
+&return /* adjust
+
+/**************************************************************************
+&routine GRIDVARS
+
+  /* Set complex variable definitions 
+
+  &s cmaq$nh4 = ( %dir$cmaq%/anh4i +  %dir$cmaq%/anh4j +  %dir$cmaq%/anh4k) 
+  &s cmaq$no3 = ( %dir$cmaq%/ano3i +  %dir$cmaq%/ano3j +  %dir$cmaq%/ano3k) 
+  &s cmaq$so4 = ( %dir$cmaq%/aso4i +  %dir$cmaq%/aso4j +  %dir$cmaq%/aso4k) 
+  &s cmaq$ca = ( %dir$cmaq%/acaj +  %dir$cmaq%/acak) 
+  &s cmaq$mg = ( %dir$cmaq%/amgj +  %dir$cmaq%/amgk) 
+  &s cmaq$na = ( %dir$cmaq%/anaj +  %dir$cmaq%/anak) 
+  &s cmaq$k = ( %dir$cmaq%/akj +  %dir$cmaq%/akk) 
+  &s cmaq$cl = ( %dir$cmaq%/aclj +  %dir$cmaq%/aclk) 
+
+  &s bias$nh3 = 1
+
+
+&return /* GRIDVARS
+
+
+
+/**************************************************************************
+&routine SEASON
+
+  &if %week% < 10 or %week% > 48 &then
+    &s season = wi
+  &if %week% >= 10 and %week% <= 22 &then
+    &s season = sp
+  &if %week% >= 23 and %week% <= 35 &then
+    &s season = su
+  &if %week% >= 36 and %week% <= 48 &then
+    &s season = fa
+
+  &if ^ [variable season] &then
+    &return &error ERROR: no matching season for week=%week%
+
+&return /* season
+
+

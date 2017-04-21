@@ -1,0 +1,178 @@
+&args yearfrom yearto routine media options:REST
+
+  &severity &error &fail
+
+  &if [keyword %routine% week year] = 0 &then 
+	&call Usage
+
+  &if [keyword %media% aconc ddep depv ions vdwtd] = 0 &then 
+	&call Usage
+
+/*----------------------------------------------------------
+/* Initial variables:
+/*----------------------------------------------------------
+
+  &s home$ascii = /data/cmaq
+  &s home$tdep = /data/arc/tdep
+  &s errfile = [locase /%home$tdep%/%AML$FILE%.err]
+
+  &s weekfrom = 1
+  &s weekto = 52
+
+  &s vars$aconc = hno3 nh3 so2 anh4i anh4j anh4k ano3i ano3j ano3k aso4i aso4j aso4k
+  &s vars$depv = vd_hno3 vd_so2 vd_nh3 vmassi vmassj vmassc
+  &s vars$ddep = anh4i anh4j anh4k ano3i ano3j ano3k aso4i aso4j aso4k hno3 nh3 so2 acaj acak amgj amgk anaj anak akj akk aclj aclk
+  &s vars$nom = hono n2o5 nh3d nh3e no no2 ntr opan pan panx dd_n_tot dd_s_seas dd_s_tot
+  &s vars$ions = acaj acak amgj amgk anaj anak akj akk aclj aclk
+  &s vars$vdwtd = hno3 nh3 so2 anh4i anh4j anh4k ano3i ano3j ano3k aso4i aso4j aso4k acaj acak 
+  &s vars$vdwtd = anh4i anh4j anh4k ano3i ano3j ano3k aso4i aso4j aso4k acaj acak 
+
+ /* &s vars$ddep = nh3 nh3d nh3e
+  
+  &s varlist = [value vars$%media%]
+  
+  &if ^ [null %options%]  &then 
+	  &do opt &LIST [unquote %options%]
+		&ty Setting %opt%
+		&s [unquote [subst %opt% = ' '] ]
+	  &end
+  
+  &do year := %yearfrom% &to %yearto%
+		&s n$count = 0
+		&type ***************************************************
+		&type %media% %year%
+
+		&s dir$ascii = %home$ascii%/%year%/ascii/%media%
+
+		&call %routine%
+		
+		&if %n$count% eq %n$expected% &then
+			&ty >>> OK Expected: %n$expected%  Found: %n$count% 
+		&else
+			&ty >>> WARNING Expected: %n$expected%  Found: %n$count% 
+
+	&end /* year
+
+&return
+
+
+/***********************************************************
+&routine USAGE
+	&return &error USAGE: %AML$FILE% <yearfrom> <yearto> <week|year|ratios> <aconc|ddep|anndep|depv|ions> {check}
+
+&return /* USAGE 
+
+/***********************************************************
+&routine YEAR
+	/* We only need to export annual values DDEP and NOM (not monitored) variables
+	&s dir$out = %home$tdep%/cmaq/ddep/%year%
+
+	&if ^ [EXISTS %dir$out% -dir] &then
+	  &sys mkdir -p %dir$out% 
+
+  &s varlist = %vars$ddep% %vars$nom%   
+  &s varlist = pan panx nh3 nh3d nh3e
+  
+  &s n$expected = [token %varlist% -count]
+  
+  &do var &LIST %varlist%
+
+	&s workspace = %dir$out%/year
+	&s infile = %dir$ascii%/%var%-0.asc
+	&s outgrid = %workspace%/%var%
+
+	&if [variable check] &then
+		&call Check
+
+	&call Make_Grid
+
+  &end /*var 
+
+&return
+
+/***********************************************************
+&routine WEEK
+
+	&s dir$out = %home$tdep%/cmaq/%media%/%year%
+
+	&if ^ [EXISTS %dir$out% -dir] &then
+	  &sys mkdir -p %dir$out% 
+
+  &s varlist = [value vars$%media%]
+
+  &s n$expected = [calc [token %varlist% -count] * 52 ]
+
+  &do week = %weekfrom% &to %weekto%
+		&if [exists %errfile% -file] &then
+			&return &error Run cancelled with %errfile%
+
+	  &do var &LIST %varlist%
+
+		&s workspace = %dir$out%/%week%
+		&s infile = %dir$ascii%/%var%-%week%.asc
+		&s outgrid = %workspace%/%var%
+
+		&if [variable check] &then
+			&call Check
+
+		&call Make_Grid
+			
+	  &end /*var 
+	&end /*week
+
+&return
+
+/***********************************************************
+&routine Make_Grid
+
+	&ty >>> %infile%
+
+	&if ^ [EXISTS %infile% -file] &then
+		&return &error ERROR:  %infile% not found
+
+	&if ^ [EXISTS %workspace% -work] &then
+		&sys arc createworkspace %workspace% 
+
+	&if [EXISTS %outgrid% -grid] &then
+		&sys arc kill %outgrid% 
+
+	&r ascii2grid %infile% %outgrid%
+
+	&if ^ [EXISTS %outgrid% -grid] &then
+		&return &error ERROR:  %outgrid% not successful!  %n% grids exported 
+
+	&s n$count = [calc %n$count% + 1]
+
+&return /* Make_Grid
+
+/***********************************************************
+
+&routine CHECK
+
+  &if ^ [EXISTS %infile% -file] &then 
+	&do
+		&type  ***** WARNING: %infile% not found *****
+		&s error = 1
+	&end
+  &else
+	&s n$count = [calc %n$count% + 1]
+
+	&if [variable error] &then
+		&return &error
+
+&return /* Check
+
+
+/***********************************************************
+&routine FILES
+
+&ty Make asciigrids from Oracle function :
+&ty
+&ty 	CREATE OR REPLACE DIRECTORY tdep_dir AS '/data/cmaq/2002/aconc_asc';
+&ty 	SELECT asciigrid(media,table_name,variable,year,week) 
+&ty 		FROM TDEP.ASCIIGRID_WEEK_V ;
+
+&return &error
+
+/***********************************************************
+

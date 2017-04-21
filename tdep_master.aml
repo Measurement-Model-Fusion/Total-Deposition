@@ -1,0 +1,87 @@
+/*****************************************************
+/* Master file for calling TDEP routines
+/*  Export asciigrids from Oracle using asciigrid function
+/* 	CREATE OR REPLACE DIRECTORY tdep_dir AS '/data/cmaq/2002/aconc_asc';
+/* 	SELECT asciigrid(media,table_name,variable,year,week) 
+/* 		FROM TDEP.ASCIIGRID_WEEK_V ;
+/*****************************************************
+
+/* Import asciigrids as Arc Grids 
+&r tdep_asciigrid 2002 2012 week aconc check
+&r tdep_asciigrid 2002 2012 week depv check
+&r tdep_asciigrid 2002 2012 week ddep check
+
+&r tdep_asciigrid 2002 2012 year ddep check
+
+/* Total the aerosol fractions
+&r tdep_cmaqdep 2002 2012 
+
+/* Calculate the particle mode ratios for fractional Vds
+&r tdep_particle_ratios 2002 2012 
+
+/* Find the average cmaq bias for each week 
+/* The seasonal adjustment is just for display and summary purposes
+&r tdep_bias week grids force
+&r tdep_bias week maps
+&r tdep_bias season grids force
+&r tdep_bias season maps
+
+/* Adjust CMAQ deposition grids for bias
+&r tdep_adjust 2002 2012 ddep
+&r tdep_adjust 2002 2012 ions
+
+/* Interpolate the network point data into grids
+&r tdep_conc 2000 2014
+
+/* Calculate the deposition from network conc and CMAQ vd
+&r tdep_concdep 2000 2014 aconc
+&r tdep_concdep 2000 2014 ions
+
+/* Combine Weekly deposition from CMAQ and Measured Dep
+/* Convert units from kg-chemical/ha to kg-element/ha
+&r tdep_combine 2000 2014 check 
+&r tdep_combine 2000 2014 
+
+/* Accumulate the deposition for each week
+&r tdep_cumm 2000 2014 
+
+/* Check to make sure all grids exist for each year
+&r tdep_total 2000 2014 check
+
+/* Calculate the total deposition and create maps for each year
+&r tdep_total 2000 2014 sum total maps
+
+/* Calculate the 3-year averages and create maps for end years
+&r tdep_total 2000 2002 average
+&r tdep_total 2012 2014 average 
+&r tdep_total 0002 0002 maps
+&r tdep_total 1214 1214 maps
+
+/* Export all of the maps
+&r tdep_total 2000 2014 export
+&r tdep_total 0002 0002 export
+&r tdep_total 1214 1214 export
+
+
+/*<<<<<<<<<<<<<<< SCRATCH AREA *************************
+&r tdep_hillshade total/1315/n_tw-1315
+
+/** bash
+
+for dir in *; do echo $dir; zip -r $dir $dir; done
+
+for dir in ../export/* 
+	do x=$(echo $dir | sed 's/..\/export\///')
+	echo $x
+	mkdir species/$x
+	cp [012]*/$x-[012]*.png species/$x
+done
+
+/* Example grids
+
+
+&r tdep_total 3008 3008 maps images vars$maps=s_td
+&r tdep_total 3008 3008 maps images vars$maps=n_td
+&r tdep_total 4008 4008 maps images vars$maps=s_td
+&r tdep_total 4008 4008 maps images vars$maps=n_td
+

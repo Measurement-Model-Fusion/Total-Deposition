@@ -1,0 +1,115 @@
+/* TDEP_CUMM.AML
+/* Adds cummulative combined deposition for measured variables for each week 
+
+  &args yearfrom yearto options:REST
+  &severity &error &fail
+  
+  &if [null %yearfrom%]  &then 
+    &call USAGE
+
+  &if [null %yearto%]  &then 
+    &s yearto = %yearfrom%
+	
+/*----------------------------------------------------------
+/* Initial variables:
+/*----------------------------------------------------------
+
+  &s home = /data/arc/tdep
+  &s cellsize = MINOF           /* Should be 4km for PRISM
+  &s varlist = so2 so4 hno3 no3 nh4 ca mg na k cl
+
+   &s weekfrom = 1
+   &s weekto = 52
+   
+  &if ^ [null %options%]  &then 
+    &call OPTIONS
+
+  &do year := %yearfrom% &to %yearto%
+    &type ***************************************************
+    &ty %year%
+    &type ***************************************************
+
+    &s dir$comb = %home%/combine/%year%  /* weekly combined output 
+
+	&if ^ [EXISTS %dir$comb% -DIR] &then
+
+	&do week = %weekfrom%  &to  %weekto%
+
+		&type ---------------------------------------------------
+		&type  WEEK=%year% %week% 
+		&workspace %dir$comb%/%week%
+
+		&if [EXISTS %home%/arcerror -FILE] &then
+			&return &error
+
+		&call CUMM_VARIABLES
+
+		&data arc grid
+			setcell %cellsize%
+			hno3_dwcum = %cumm$hno3% 
+			nh4_dwcum = %cumm$nh4% 
+			no3_dwcum = %cumm$no3% 
+			so2_dwcum = %cumm$so2% 
+			so4_dwcum = %cumm$so4% 
+			ca_dwcum = %cumm$ca% 
+			cl_dwcum = %cumm$cl% 
+			k_dwcum = %cumm$k% 
+			mg_dwcum = %cumm$mg% 
+			na_dwcum = %cumm$na% 
+			 quit
+		&end /* data
+
+	&end /* do week
+
+  &end /* year
+
+&return
+
+/*************************************************    
+
+
+&routine CUMM_VARIABLES
+
+    &s lastweek = [calc %week% - 1]
+
+    &do var &LIST  %varlist%
+
+		&if %week% = 1 &then 
+			&s last$%var% = 0
+		&else
+			&s last$%var% = %dir$comb%/%lastweek%/%var%_dwcum
+		
+		&s cumm$%var% = %var%_dw + [value last$%var%]
+
+		&if [exists %var%_dwcum -grid] &then 
+		   &sys arc kill %var%_dwcum
+
+    &end /* var
+
+&return
+
+
+/**************************************************************************
+&routine OPTIONS
+
+  &setvar options = [UNQUOTE [LOCASE %options%]]
+  &s optnum =  [token %options% -count]
+
+    /* replace variables with any options 
+  &do n = 1 &to %optnum%
+    &s opt = [extract %n% %options%]
+    &ty Setting %opt%
+    &s [unquote [subst %opt% = ' '] ]
+  &end
+
+&return  
+
+
+/**************************************************************************
+&routine USAGE
+
+  &type USAGE: %AML$FILE% <yearfrom> <yearto> {options}
+  &type     Options:  
+
+&return &error 
+

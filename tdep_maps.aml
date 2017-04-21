@@ -1,0 +1,345 @@
+/* TDEP_MAPS.AML
+/* Creates maps for the analytes in &args
+
+/*----------------------------------------------------------
+
+/*  &return &error
+
+&args year analyte options:REST
+
+&severity &error &fail
+
+&if [EXISTS /home/glear/arcerror -FILE] &then
+  &return &error
+
+&if [null %year%]  &then 
+  &call USAGE
+
+/*----------------------------------------------------------
+/*   Define Variables
+/*----------------------------------------------------------
+
+  &setvar home        :=  /data/arc/tdep
+  &setvar analyte     :=  [upcase %analyte%]
+  &setvar options     :=  [locase %options%]
+  &setvar shadeset    :=  %.source%/shadesets/bluegray2rust.shd
+  &setvar shadeset    :=  %.source%/shadesets/green2red255.shd
+  &setvar analyte_tbl :=  tdep.arc_analyte_v
+  &setvar basecov     :=  %.source%/us48
+  &setvar extent      :=  us48
+ 
+  &r ora
+  
+  &call ANALYTE_LEGEND             /* Set most of the analyte parameters 
+
+  /* replace variables with any options 
+  &do opt &LIST [unquote %options%]
+    &ty Setting %opt%
+    &s [unquote [subst %opt% = ' '] ]ne
+  &end
+  
+  &setvar grid        :=  %home%/total/%year%/%analyte%
+  &setvar pointcov    :=  %home%/networks/%year%/%analyte%cov
+  
+  &setvar data$source = CASTNET/CMAQ/NADP
+
+  &call MAP_VARS                 /* Set most of the map parameters 
+
+  /*----------------------------------------------------------
+  /* Setup target workspace
+  /*----------------------------------------------------------
+  &if ^ [exists %grid% -GRID] &then
+    &return &error ***** ERROR: %grid% not found *****
+    
+  &do dir &LIST %map$eps% %map$gra% %img$file% %img$icon%
+     &if ^ [EXIST [DIR %dir%] -DIR] &then
+          &system mkdir -p [DIR %dir%]
+  &end
+
+  &setvar current :=  [show workspace]
+  &type Changing workspace to %home%
+  &workspace %home%
+    
+ 
+  /*----------------------------------------------------------
+  /* CHeck to make sure all necessary files and coverages are here 
+  /* before we start
+  /*----------------------------------------------------------
+  /* Make sure we have a remap file
+  &if [EXISTS %rmpinfo% -INFO] &then
+    &type Using %rmpinfo% for remap table
+  &else 
+    &return &error ERROR: %rmpinfo% does not exist!
+
+  &call MAKE_MAP
+
+  &call MAKE_IMAGE 
+  
+  &work %current%
+   
+&return %AML$FILE% done...
+
+/**************************************************************************
+&routine MAKE_IMAGE
+/**************************************************************************
+  /* we need to make an EPS file from the GRA when printing landscape
+  /* otherwise just make the GIF file
+
+    &if [exists %map$eps% -file] &then
+       &type Deleting %map$eps% [DELETE %map$eps% -FILE]
+        
+  postscript %map$gra% %map$eps% 1 %.source%/landscape.prm        
+  &sys ps2png.pl -l %map$res% %map$eps% %img$file%
+
+  &if [variable DISPLAY] &then
+    &sys xli %img$file%
+
+  &do file &LIST %img$file%_ 
+     &type Deleting %file% [DELETE %file% -FILE]
+  &end
+
+
+&return /* MAKE_IMAGE
+
+
+
+/**************************************************************************
+&routine MAKE_MAP
+/**************************************************************************
+
+  &type ********************************
+  &type Mapping %analyte% for %year% ...
+  &type ********************************
+
+  &call KEY_LABELS
+  
+  &if [exists %map$eps% -FILE] &then
+    &ty [DELETE %map$eps% -file]
+       
+  &data arc arcplot 
+     %outmode%         
+     %outfile%
+          
+     mapex %map$ext%
+     pagesize %page$x% %page$y%
+     mapposition CEN CEN
+     shadetype color
+     shadecolor %page$color%
+     patch 0 0 %page$x% %page$y%
+     
+     shadeset %shadeset%
+     gridnodatasymbol %page$color%
+     gridshades %grid% # %rmpinfo% 
+
+    /* draw in Great Lakes as white
+/*     asel %basecov% polys
+/*     reselect %basecov% polys lwcode eq 'W'
+/*     polygonshades %basecov% 256  
+
+     asel %basecov% polys
+     linecolor cmyk 0 0 0 50
+     arcs %basecov%
+
+     textfont 'helvetica'
+     textstyle typeset
+     textquality proportional
+
+     markerset mineral
+     markersymbol 123
+     markerscale 0.3
+
+     markercolor cmyk 0 0 0 70
+
+     &if [exists %pointcov% -coverage] &then
+       points %pointcov%
+
+     textsize %text$big%
+     textcolor %color$text1%
+     linecolor %color$text1%
+     keyseparation 0 0
+     textoffset 0.15 0.05
+     textjustification CL
+     linesize .02
+     
+    &type Making Keybox
+
+    &setvar key$step = [calc ( [EXTRACT 4 %keyarea%] - ~
+            [EXTRACT 2 %keyarea%] - 0.1 ) / 255]
+    &setvar key$x = [EXTRACT 3 %keyarea%]
+    &setvar key$y = [EXTRACT 4 %keyarea%] 
+    &format 3
+    textsize %text$small%
+    &do n = 1 &to %key$labels% 
+        &setvar text$y = [FORMAT '%1%' ~
+          [CALC %KEY$Y% - ( ( [VALUE y$%n%] - 1 ) * %key$step% )] ]
+        line  %key$x% %text$y% [CALC %key$x% + .1] %text$y%
+        move %key$x% %text$y% 
+        text [VALUE legend$%n%]
+    &end
+    keybox 0.2 %key$step%
+    keyarea %keyarea%
+    keyshade %rmpinfo% info symbol legend nobox notext
+    
+    textsize %text$big%
+    textoffset 0 0
+    textjustification CL
+    move [EXTRACT 1 %keyarea%] [CALC [EXTRACT 4 %keyarea%] + 0.6 ]
+    text [QUOTE %legend%]
+    move [EXTRACT 1 %keyarea%] [CALC [EXTRACT 4 %keyarea%] + 0.35 ]
+    textsize %text$small%
+    text [QUOTE %units%]
+    textsize %text$big%
+          
+    textfont 'times'
+    textsize .2
+    textcolor %color$text2%
+    textjustification LL
+    move 0.5 0.2
+    text [QUOTE Source: %data$source%]
+
+    /* print date
+    textsize .2
+    textjustification LR
+    move [CALC %page$x% - 0.5] 0.2 
+    text "USEPA [DATE -USA]"
+    textsize %text$big%
+    move [CALC %page$x% - 0.5] 0.5 
+    text "%description% %year%"
+    
+    quit
+  &end /* data arcplot
+  
+&return  /* MAKE_MAP
+
+/******************************************
+&routine ANALYTE_LEGEND
+/******************************************
+
+  &if [index [show cursors] var] = 1 &then 
+    dbmscursor var remove
+  
+  &s sql = select * from %analyte_tbl% where analyte= [quote %analyte%]
+  dbmscursor var declare oracle %sql%
+  dbmscursor var open
+
+  &if %:var.AML$NSEL% = 0 &then
+    &return **** ERROR:  %analyte% is not in %analyte_tbl% ****
+
+  &setvar legend   = %:var.legend%
+  &setvar units    = %:var.legend_unit%
+  &setvar decimals = %:var.precision%
+  &setvar description  = %:var.description%
+  &setvar rmpinfo  = %.source%/rmpinfo/%:var.rmpinfo%
+
+  &if [INDEX %analyte% PCT] > 0 &then
+      &setvar shadeset = %.source%/shadesets/blue2red.shd
+
+  &if [INDEX %analyte% DIFF] > 0 &then
+      &setvar shadeset = %.source%/shadesets/blue2red.shd
+
+  dbmscursor var REMOVE
+
+
+&return /* ANALYTE_VARS 
+
+
+/**************************************************************************
+&routine MAP_VARS
+/**************************************************************************
+  
+  &s page$color  := white
+
+  &s map$root    := [locase %analyte%-%year%]
+  &s map$ext     := %.source%/%extent%
+  &s map$res     := -r100
+
+  &s color$text1 := cmyk 0 0 0 90
+  &s color$text2 := cmyk 0 0 0 70
+  &s color$lakes := 256
+  &s text$big    := 0.25
+  &s text$small  := 0.20
+
+  &s img$type  = png
+
+  &s img$dir  = [locase %home%/%img$type%/%year%]
+
+  &setvar page$type = landscape
+  &setvar map$root =  %map$root%
+  &setvar basecov  =  %.source%/na
+/*        &setvar map$ext   =  -2480000,166500,3340000,3990000
+
+  &setvar map$gra  = [locase %home%/gra/%year%/%map$root%.gra]
+  &setvar map$eps  = [locase %home%/eps/%year%/%map$root%.ps]
+
+  &setvar img$file  = [locase %img$dir%/%map$root%.%img$type%]
+  &setvar img$icon = [locase %img$dir%/icons/%map$root%.%img$type%]
+
+  &setvar map$ref  = [locase %img$dir%/%map$root%]
+
+  &setvar outmode  =  display 1040 1  /* 1=gra   2=eps    3=ai
+  &setvar page$x   =  11
+  &setvar page$y   =  8.5
+  &setvar keyarea  =  9.7 1 9.9 4.5
+  &setvar outfile  =  %MAP$gra%
+
+&return /* MAP_VARS 
+
+
+/**************************************************************************
+&routine KEY_LABELS
+/**************************************************************************
+  
+  /* Get the number of labels for the key
+  
+  &if [index [show cursors] rmp] = 1 &then 
+    dbmscursor rmp remove
+  
+  CURSOR rmp DECLARE %rmpinfo% INFO RO legend ne '' 
+  CURSOR rmp OPEN
+
+  &setvar key$labels = %:rmp.AML$NSEL%
+  &setvar n = 1
+
+  &do &while ( %key$labels% > 0 AND %:rmp.AML$NEXT% ) 
+    &setvar y$%n% = %:rmp.AML$RECNO%
+    &setvar legend$%n% =  [QUOTE %:rmp.legend% ]
+    &setvar n = [CALC %n% + 1]
+    CURSOR rmp NEXT
+  &end
+
+  CURSOR rmp REMOVE
+
+  &if %key$labels% > 0 &then
+    &setvar keybox$y = [calc 0.015 * ( 255 / %key$labels% ) ]
+  &else
+    &ty WARNING:  No labels have been defined 
+
+&return /* KEY_LABELS
+
+
+/**************************************************************************
+&routine USAGE
+
+  &severity &error &fail
+  &type USAGE: %AML$FILE% <year> <analyte> {options}
+  &type   OPTIONS: map image
+  &type            labels display noicon wetdep debug gif mpeg
+  &type            res=<n> bg=black 
+
+&return &error 
+
+
+/**************************************************************************
+&routine BAILOUT
+/**************************************************************************
+
+  &ty *********************************************
+  &ty  ERROR encountered for %analyte% %year% %options%
+  
+  &if [upcase [response 'Continue?' Y]] = Y &then
+      &return &warning
+  &else
+      &return &error 
+
+&return &warning Bailing out of %AML$FILE%
+

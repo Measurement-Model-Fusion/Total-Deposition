@@ -1,0 +1,144 @@
+&args yearfrom yearto type options:REST
+
+  &severity &error &fail
+
+  &if [null %type%] &then 
+	&call Usage
+
+/*----------------------------------------------------------
+/* Initial variables:
+/*----------------------------------------------------------
+
+  &s home = /data/arc/tdep
+  &s errfile = [locase /%home%/%AML$FILE%.err]
+
+  &s weekfrom = 1
+  &s weekto = 52
+
+  &if ^ [null %options%]  &then 
+	  &do opt &LIST [unquote %options%]
+		&ty Setting %opt%
+		&s [unquote [subst %opt% = ' '] ]
+	  &end
+  
+  &do year := %yearfrom% &to %yearto%
+		&type ***************************************************
+		&type %year%
+		&type ***************************************************
+
+		&do week = %weekfrom% &to %weekto%
+			&if [exists %errfile% -file] &then
+				&return &error Run cancelled with %errfile%
+
+			&ty YEAR=%year% WEEK=%week%
+
+			&call %type%_Ratios
+
+		&end /* week
+
+	&end /* year
+
+&return
+
+
+/***********************************************************
+&routine USAGE
+	&return &error USAGE: %AML$FILE% <yearfrom> <yearto> <aconc|ions> 
+
+&return /* USAGE 
+
+/***********************************************************
+&routine Ions_Ratios
+
+  &s varlist = aca amg ak ana acl
+  &s dir$cmaq = %home%/cmaq/ions/%year%
+
+  &do var &LIST %varlist%
+
+	&ty
+	&ty *** %var% *****
+
+	&s workspace = %dir$cmaq%/%week%
+
+	&s grid$j = %workspace%/%var%j
+	&s grid$k = %workspace%/%var%k
+
+	&s outgrid$t = %workspace%/%var%t
+	&s outgrid$j = %workspace%/%var%rj
+	&s outgrid$k = %workspace%/%var%rk
+
+	/* Check to make sure everything is there
+	&do grid &LIST %grid$j% %grid$k%
+		&if ^ [EXISTS %grid% -grid] &then
+			&return &error ERROR:  %grid% not found
+	&end
+
+	/* Kill preexisting grids
+	&do grid &LIST %outgrid$t% %outgrid$j% %outgrid$k% 
+		&if [EXISTS %grid% -grid] &then
+			&sys arc kill %grid% 
+	&end
+
+	&data arc grid
+		%outgrid$t% = SUM ( %grid$j%, %grid$k% )
+		%outgrid$j% = %grid$j% / %outgrid$t% 
+		%outgrid$k% = %grid$k% / %outgrid$t% 
+		quit
+	&end /* data
+
+	&if ^ [EXISTS %outgrid$t% -grid] &then
+		&return &error ERROR:  %grid% not successful
+  
+  &end /*var 
+
+&return
+
+/***********************************************************
+&routine Aconc_Ratios
+
+	&s varlist = anh4 ano3 aso4
+	&s dir$cmaq = %home%/cmaq/aconc/%year%
+
+	&do var &LIST %varlist%
+
+	&ty
+	&ty *** %var% *****
+
+	&s workspace = %dir$cmaq%/%week%
+
+	&s grid$i = %workspace%/%var%i
+	&s grid$j = %workspace%/%var%j
+	&s grid$k = %workspace%/%var%k
+
+	&s outgrid$t = %workspace%/%var%t
+	&s outgrid$i = %workspace%/%var%ri
+	&s outgrid$j = %workspace%/%var%rj
+	&s outgrid$k = %workspace%/%var%rk
+
+	/* Check to make sure everything is there
+	&do grid &LIST %grid$i% %grid$j% %grid$k%
+		&if ^ [EXISTS %grid% -grid] &then
+			&return &error ERROR:  %grid% not found
+	&end
+
+	/* Kill preexisting grids
+	&do grid &LIST %outgrid$t% %outgrid$i% %outgrid$j% %outgrid$k% 
+		&if [EXISTS %grid% -grid] &then
+			&sys arc kill %grid% 
+	&end
+
+	&data arc grid
+		%outgrid$t% = SUM ( %grid$i%, %grid$j%, %grid$k% )
+		%outgrid$i% = %grid$i% / %outgrid$t% 
+		%outgrid$j% = %grid$j% / %outgrid$t% 
+		%outgrid$k% = %grid$k% / %outgrid$t% 
+		quit
+	&end /* data
+
+	&if ^ [EXISTS %outgrid$t% -grid] &then
+		&return &error ERROR:  %grid% not successful
+  
+  &end /*var 
+
+&return
+

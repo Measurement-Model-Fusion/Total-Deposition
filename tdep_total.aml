@@ -1,0 +1,435 @@
+/* CMAQ_TOTAL.AML
+/* Creates weighted weekly dry deposition grids from 
+/*  measured concentrations and CMAQ
+
+  &args yearfrom yearto options:REST
+  &severity &error &fail
+  
+  &if [null %options%]  &then 
+    &call USAGE
+ 
+/*----------------------------------------------------------
+/* Initial variables:
+/*----------------------------------------------------------
+
+  &s home = /data/arc/tdep
+  &s gridmask =  %.src%/grids/us48   /* for cutting out US48 from final grids
+  &s cellsize = MINOF           /* Should be 4km for PRISM
+  &s extent = -2950369.148 115686.836 3001630.852 3319686.836
+
+  /* variable lists are just for managing directory contents
+  &s vars$nom = hono n2o5 no no2 ntr opan pan panx
+  &s vars$suffix = dw ww tw dwpct wwpct twpct
+  &s vars$suffix =  wwpct tw
+  &s vars$all = so2 so4 hno3 no3 nh4 nh3 ca mg na k cl n nom noxi nred tno3 s bc nh3net precip ns
+  &s vars$all = s ns
+
+  &call CONSTANTS
+
+  &if ^ [null %options%]  &then 
+    &call OPTIONS
+
+	&s weekfrom = 1
+	&s weekto = 52
+
+	&workspace %home%
+	
+  &do year := %yearfrom% &to %yearto%
+    &type ***************************************************
+    &ty %year%
+    &type ***************************************************
+
+    &s dir$ddep = %home%/combine/%year%/52  /* cummulative combined ddep output 
+    &s dir$wdep = /data/arc/prism/grids/%year%   /* annual wet deposition 
+    &s dir$nom = %home%/cmaq/ddep/%year%/year  /* CMAQ annual deposition
+
+	/* Output directory
+    &s dir$total = %home%/total/%year%  /* output directory for totals
+
+    &if [EXISTS arcerror -FILE] &then
+        &return &error
+
+    &if ^ [exists %dir$total% -work] &then
+	  &sys arc createworkspace %dir$total% 
+
+    &workspace %dir$total%
+
+    &if [variable total] &then
+      &call TOTAL
+
+    &if [variable average] &then
+      &call AVERAGE
+
+    &if [variable maps] &then
+      &call MAPS
+
+    &if [variable export] &then
+      &call EXPORT
+
+    &if [variable temp] &then
+      &call TEMP
+
+  &end /* year
+
+&return
+
+/**************************************************************************
+&routine CONSTANTS
+	&s radius = 800000
+	&s cellsize = MINOF
+
+	/* Constants used for converting chemical deposition to elemental 
+	&s pct$so2 = 0.5
+	&s pct$so4 = 0.333
+	&s pct$hno3 = 0.222
+	&s pct$no3 = 0.226
+	&s pct$nh3 = 0.823
+	&s pct$nh4 = 0.777
+ 
+	&s pct$hono = 0.2978
+	&s pct$n2o5 = 0.2592
+	&s pct$no = 0.4667
+	&s pct$no2 = 0.3043
+	&s pct$ntr = 0.1077
+	&s pct$opan = 0.1157
+	&s pct$pan = 0.1157
+	&s pct$panx = 0.1157
+
+	&s ueq$ca = 0.04990
+	&s ueq$cl = 0.02821
+	&s ueq$k = 0.02557
+	&s ueq$mg = 0.08226
+	&s ueq$na = 0.04350
+
+	&s ueq$n = 0.0714
+	&s ueq$s = 0.0624
+
+&return /* CONSTANTS
+
+/**************************************************************************
+&routine TOTAL
+
+    &ty Cleaning up existing files in %dir$total%
+      /* Remove any existing grids and pcts
+     &do var &LIST  %vars$all%  
+		&do suffix &LIST %vars$suffix%
+			&if [exists %var%_%suffix% -grid] &then 
+				&sys arc kill %var%_%suffix%
+		&end /* suffix
+	&end
+
+	&if [exists precip -grid] &then 
+		&sys arc kill precip 
+
+	&ty Creating annual summary grids for %year%
+    &call NOM_dw
+    
+	&data arc grid
+        setcell %dir$wdep%/so4_d
+        setwindow %extent%
+
+        /* N totals
+        hno3_dw = selectmask(%dir$ddep%/hno3_dwcum, %gridmask%)
+        nh3_dw = selectmask(%pct$nh3% * %dir$nom%/nh3d, %gridmask%)
+        nh3net_dw = selectmask(%pct$nh3% * (%dir$nom%/nh3d - %dir$nom%/nh3e), %gridmask%)
+        nh4_dw = selectmask(%dir$ddep%/nh4_dwcum, %gridmask%)
+        no3_dw = selectmask(%dir$ddep%/no3_dwcum, %gridmask%)
+	    nom_dw = selectmask(%grid$nom%, %gridmask%)
+        tno3_dw = hno3_dw + no3_dw
+	    n_dw = hno3_dw + nh3_dw + nh4_dw + no3_dw + nom_dw
+	    nh4_ww = selectmask(%pct$nh4% * %dir$wdep%/nh4_d, %gridmask%)
+	    no3_ww = selectmask(%pct$no3% * %dir$wdep%/no3_d, %gridmask%)
+        n_ww = nh4_ww + no3_ww
+	    n_tw = n_dw + n_ww
+
+        /* Redox totals
+        noxi_dw = nom_dw + hno3_dw + no3_dw
+        nred_dw = nh4_dw + nh3_dw
+        noxi_tw = nom_dw + hno3_dw + no3_dw + no3_ww
+        nred_tw = nh4_dw + nh3_dw + nh4_ww
+
+        /* N percentages of total
+	    nom_dwpct = 100 * nom_dw / n_tw
+	    n_dwpct = 100 * n_dw / n_tw
+	    noxi_dwpct = 100 * noxi_dw / n_tw
+	    nred_dwpct = 100 * nred_dw / n_tw
+	    noxi_twpct = 100 * noxi_tw / n_tw
+	    nred_twpct = 100 * nred_tw / n_tw
+
+         /* N wet percentages
+	    n_wwpct = 100 * n_ww / n_tw
+
+         /* S totals
+         so2_dw = selectmask(%dir$ddep%/so2_dwcum, %gridmask%)
+         so4_dw = selectmask(%dir$ddep%/so4_dwcum, %gridmask%)
+	    s_dw = so2_dw + so4_dw
+	    s_ww = selectmask(%pct$so4% * %dir$wdep%/so4_d, %gridmask%)
+	    s_tw = s_dw + s_ww
+
+         /* S dry percentages
+	    s_dwpct = 100 * s_dw / s_tw
+	    s_wwpct = 100 * s_ww / s_tw
+		
+		/* N+S equivalents
+		ns_tw = n_tw * %ueq$n% + s_tw * %ueq$s%
+		ns_twpct = 100 * n_tw * %ueq$n% / ns_tw 
+
+        /* Cation totals
+		ca_dw = selectmask(%dir$ddep%/ca_dwcum, %gridmask%)
+		ca_ww = selectmask(%dir$wdep%/ca_d, %gridmask%)
+		ca_tw = ca_dw + ca_ww
+
+		mg_dw = selectmask(%dir$ddep%/mg_dwcum, %gridmask%)
+		mg_ww = selectmask(%dir$wdep%/mg_d, %gridmask%)
+		mg_tw = mg_dw + mg_ww
+
+		na_dw = selectmask(%dir$ddep%/na_dwcum, %gridmask%)
+		na_ww = selectmask(%dir$wdep%/na_d, %gridmask%)
+		na_tw = na_dw + na_ww
+
+		k_dw = selectmask(%dir$ddep%/k_dwcum, %gridmask%)
+		k_ww = selectmask(%dir$wdep%/k_d, %gridmask%)
+		k_tw = k_dw + k_ww
+
+		/* Basecation ueq/ha
+		bc_dw = %ueq$ca% * ca_dw + %ueq$mg% * mg_dw + %ueq$na% * na_dw + %ueq$k% * k_dw 
+		bc_tw = %ueq$ca% * ca_tw + %ueq$mg% * mg_tw + %ueq$na% * na_tw + %ueq$k% * k_tw 
+		bc_dwpct = 100 * bc_dw / bc_tw
+		
+		/* Chloride totals
+		cl_dw = selectmask(%dir$ddep%/cl_dwcum, %gridmask%)
+		cl_ww = selectmask(%dir$wdep%/cl_d, %gridmask%)
+		cl_tw = cl_dw + cl_ww
+		cl_dwpct = 100 * cl_dw / cl_tw
+		
+		/* Precipitation
+	    precip_ww = selectmask(%dir$wdep%/precip, %gridmask%)
+	
+
+		quit
+	&end
+	
+    &if ^ [exists n_tw -grid] &then
+		&return &error ERROR: N_tw failed
+
+    &if ^ [exists s_tw -grid] &then
+		&return &error ERROR: S_tw failed
+   
+&return /* Total
+
+
+/**************************************************************************
+&routine NOM_DW
+	/* Defines the input variable for NOM_dw
+	&s grid$nom = 0
+	&do var &LIST %vars$nom%
+		&s grid$nom = %grid$nom% + ([value pct$%var%] * %dir$nom%/%var%)
+	&end
+
+&return /* NOM_dw
+
+/**********************************************
+&routine MAPS
+
+  &ty Plotting maps 
+    
+    &do var &LIST %vars$all%
+	
+		&do suffix &LIST %vars$suffix%
+			&s mapvar = %var%_%suffix%
+			&s grid = %home%/total/%year%/%mapvar%
+			&s png = %home%/png/%year%/%mapvar%-%year%.png
+			&s dir$species = %home%/png/species/%mapvar%
+			
+			&if [exists %grid% -grid] &then
+				&do
+					&r tdep_maps %year% %mapvar% 
+					&if ^ [exists %dir$species% -directory] &then
+						&sys mkdir -p %dir$species%
+					&sys cp %png% %dir$species%
+				&end
+			
+		&end /* suffix
+
+	&end /* var
+
+&return
+
+/**********************************************
+&routine AVERAGE
+
+  &s years = [substr %yearfrom% 3 2][substr %yearto% 3 2]
+  &s dir$total = %home%/total
+  &s dir$out = %home%/total/%years%
+
+  &ty Averaging grids for %years% 
+    
+  &if ^ [EXISTS %dir$out% -work] &then
+    &sys arc createworkspace %dir$out%
+
+    &do basevar &LIST %vars$all%
+	
+		&do suffix &LIST %vars$suffix%
+			&s var = %basevar%_%suffix%
+
+			/* Average the variable if the grid exists for the first year
+			&if [exists %dir$total%/%yearfrom%/%var% -grid] &then
+				&do
+					&ty Averaging %var% for %years%
+				    &s outgrid = %dir$out%/%var%
+					
+					&if [EXISTS %outgrid% -grid]  &then
+					  &sys arc kill %outgrid% all
+
+					&s gridlist = %dir$total%/%yearfrom%/%var%
+				  
+					&do year := [calc %yearfrom% + 1] &to %yearto% 
+					  &s gridlist = %gridlist%, %dir$total%/%year%/%var%
+					&end
+
+					&data arc grid
+					  setcell minof
+					  %outgrid% = MEAN ( %gridlist% )
+					  quit
+					&end /* grid
+					
+					&if ^ [exists %outgrid% -grid] &then
+						&return &error *** ERROR:  %outgrid% not found ***
+
+				&end
+		&end /* suffix
+
+	&end /* var
+
+	&return &error Average complete
+	
+&return /*AVERAGE
+
+/**********************************************
+&routine EXPORT
+
+  &ty Exporting grids 
+  &workspace %home%
+
+  &do basevar &LIST %vars$all%
+
+		&do suffix &LIST %vars$suffix%
+			&s var = %basevar%_%suffix%
+
+			&s grid = %dir$total%/%var%
+			&s file = export/%var%/%var%-%year%
+			&s file00 = export/%var%/%var%-%year%.e00
+			&s zip = zip/%var%/%var%-%year%.zip
+		  
+			&if [exists %grid% -grid ] &then
+				&do 
+					&ty Exporting %grid%
+					&if ^ [exists export/%var% -dir] &then
+					  &sys mkdir -p export/%var%
+
+					&if ^ [exists zip/%var% -dir] &then
+					  &sys mkdir -p zip/%var%
+
+					&if [exists %file00% -file ] &then
+					  &ty Removing %file00%: [delete %file00% -file]
+
+					&sys arc export grid  %grid% %file% FULL
+
+					&if [exists %file00% -file ] &then
+						&sys zip -j %zip% %file00%
+
+					&if ^ [exists %zip% -file ] &then
+						&return &error *** ERROR: %zip% does not exist ***
+				&end /* grid exists
+
+		&end /* suffix
+
+	&end /* var
+
+
+&return
+
+/***********************************************************
+&routine SPECIES
+
+  &ty Checking species pngs and export files
+  
+  &workspace %home%
+  
+  &do basevar &LIST %vars$all%
+		&do suffix &LIST %vars$suffix%
+			&s var = %basevar%_%suffix%
+			&s grid = total/%year%/%var%
+			
+			&if [exists %grid% -grid] &then
+				&do
+					&type %grid%
+					&s species$dir = png/species/%var%
+					&s png$dir = png/%year%/
+					&s export$dir = export/%var%
+					&s zip$dir = zip/%var%
+					&s file = %var%-%year%  
+
+					&s png = %png$dir%/%file%
+					&s species = %species$dir%/%file%.png
+					&s zip = %zip$dir%/%file%.zip
+
+					&if ^ [exist %zip% -file] &then
+						&ty *** WARNING: %zip% not found ***
+						
+					&if ^ [exists %species% -file] &then
+						&do
+							&type Copying %png% to %species%
+							&if [exist %png% -file] &then
+								&sys cp %png% %species%
+							&else
+								&ty *** WARNING: %png% not found ***
+						&end
+
+				&end /* do
+
+			
+		&end /* suffix
+  &end /* var
+  
+&return /* Complete
+  
+
+
+/**********************************************
+&routine HILLSHADES
+
+  &ty Making hillshade images 
+  &work %home%
+  
+    &do var &LIST precip_ww n_tw
+      &r tdep_hillshade %year% %var%
+    &end
+
+&return
+
+
+/**************************************************************************
+&routine OPTIONS
+
+  &setvar options = [UNQUOTE [LOCASE %options%]]
+  &s optnum =  [token %options% -count]
+
+    /* replace variables with any options 
+  &do n = 1 &to %optnum%
+    &s opt = [extract %n% %options%]
+    &ty Setting %opt%
+    &s [unquote [subst %opt% = ' '] ]
+  &end
+
+&return  
+
+
+/**************************************************************************
+&routine USAGE
+
+  &type USAGE: %AML$FILE% <yearfrom> <yearto> <total|maps|export|complete|average> {options}
+  &type     Options:  
+
+&return &error 
+

@@ -1,0 +1,188 @@
+/* TDEP_CONCDEP.AML
+/* Creates deposition grids from weekly concentrations of monitoring networks
+/*   and Vd grids from CMAQ
+/* Units are in kg-molecule/ha
+
+
+/*----------------------------------------------------------
+/* Initial variables
+/*----------------------------------------------------------
+
+  &args yearfrom yearto type options:REST
+
+  &severity &error &fail
+
+  &if [keyword %type% aconc ions] = 0 &then 
+    &call USAGE
+
+  &if [null %yearto%]  &then 
+    &s yearto = %yearfrom%
+
+  &s weekfrom = 1
+  &s weekto = 52
+  
+  &r ora
+
+  &call CONSTANTS
+  
+  /* Define base variables
+  &s home      := /data/arc/tdep
+  &s basecov     := %.source%/us48
+
+	/* Oracle variables
+  &s ora$conc 	 := TDEP.MEASURED_WEEK
+
+
+  /*  We add NH3 later depending on the year
+  &s vars$aconc     :=  so2 hno3 no3 nh4 so4 
+  &s vars$ions    :=  ca mg na k cl
+  &s varlist := [value vars$%type%]
+
+  &if ^ [null %options%]  &then 
+    &call OPTIONS
+  
+  &do year := %yearfrom% &to %yearto%
+    &type ***************************************************
+    &ty %year%
+    &type ***************************************************
+
+    /* Add NH3 after AmoN started
+    &if %year% > 2009 and %type% = aconc &then
+      &s vars = %varlist% nh3
+    &else
+      &s vars = %varlist%
+	  
+    &do week = %weekfrom% &to %weekto%
+
+		&if [EXISTS %home%/arcerror -FILE] &then
+			&return &error
+
+		&ty ---------------------------------------------------
+		&ty WEEK=%year% %week% 
+		&ty ---------------------------------------------------
+    
+		&s dir$conc	=  %home%/conc/%year%/%week%
+		&s dir$dd	=  %home%/conc/%year%/%week%
+		&s dir$vd	=  %home%/cmaq/vdwtd/%year%/%week%
+		&s dir$ra	=  %home%/cmaq/%type%/%year%/%week%   /* aerosol ratios
+
+		&call DEFINE_VD
+		
+		&workspace %dir$conc%
+	  
+		&do var &LIST %vars%
+
+			&s ora$var = [upcase %var%]
+			&s conc$grid = %var%
+			&s dd$grid = %var%dw
+			&s vd$grid = %var%vdw
+
+			&ty *** WEEK=%year% %week% VAR=%ora$var% ***
+
+			&if [exists %conc$grid% -grid]  &then 
+			  &call DRYDEP
+			&else
+			  &return &error ERROR:  Cant find %conc$grid% 
+
+			&if ^ [exists %dd$grid% -grid]  &then 
+			  &return &error ERROR: %dd$grid% failed
+
+		&end /* do var
+    &end /* do week
+  &end /* year
+
+  &workspace %home%
+
+&return %AML$FILE% done...
+  
+/**************************************************************************
+&routine DRYDEP
+
+  &if [exists %dd$grid% -grid] &then
+	   &sys arc kill %dd$grid%
+
+  &if [exists %vd$grid% -grid] &then
+	   &sys arc kill %vd$grid%
+
+  &data arc grid
+     setcell MINOF
+     setwindow %xmin% %ymin% %xmax% %ymax%
+	 %vd$grid% = [value vd$%var%]
+     %dd$grid% = %conc$grid% * %vd$grid% * %fluxrate% 
+     quit
+  &end
+
+  &if ^ [exists %dd$grid% -GRID] &then
+    &return &error ERROR: %dd$grid% failed
+
+&return
+
+
+/**************************************************************************
+&routine CONSTANTS
+ 
+  &ty Setting constants 
+  
+  /* Set grid constants
+  &s cellsize = 12000 
+  &s power = 1  
+
+  /* ug/m3 to kg/ha/week
+  &s fluxrate = [calc 0.00036 * 168 ] 
+
+  /* Define the ALBERT boundaries for the grid 
+  &setvar xmin := -2400000.00
+  &setvar ymin :=   170000.00
+  &setvar xmax :=  2400000.00
+  &setvar ymax :=  3300000.00
+
+&return /* CONSTANTS
+
+/**************************************************************************
+&routine DEFINE_VD
+ 
+  /* Deposition velocity formulas
+  &s vd$nh3 = %dir$vd%/nh3
+  &s vd$so2 = %dir$vd%/so2
+  &s vd$hno3 = %dir$vd%/hno3
+  &s vd$so4 = (%dir$vd%/aso4i * %dir$ra%/aso4ri) + (%dir$vd%/aso4j * %dir$ra%/aso4rj) + (%dir$vd%/aso4k * %dir$ra%/aso4rk) 
+  &s vd$no3 = (%dir$vd%/ano3i * %dir$ra%/ano3ri) + (%dir$vd%/ano3j * %dir$ra%/ano3rj) + (%dir$vd%/ano3k * %dir$ra%/ano3rk) 
+  &s vd$nh4 = (%dir$vd%/anh4i * %dir$ra%/anh4ri) + (%dir$vd%/anh4j * %dir$ra%/anh4rj) + (%dir$vd%/anh4k * %dir$ra%/anh4rk) 
+  &s vd$ca = (%dir$vd%/acaj * %dir$ra%/acarj) + (%dir$vd%/acak * %dir$ra%/acark) 
+  &s vd$mg = (%dir$vd%/acaj * %dir$ra%/amgrj) + (%dir$vd%/acak * %dir$ra%/amgrk) 
+  &s vd$na = (%dir$vd%/acaj * %dir$ra%/anarj) + (%dir$vd%/acak * %dir$ra%/anark) 
+  &s vd$k = (%dir$vd%/acaj * %dir$ra%/akrj) + (%dir$vd%/acak * %dir$ra%/akrk) 
+  &s vd$cl = (%dir$vd%/acaj * %dir$ra%/aclrj) + (%dir$vd%/acak * %dir$ra%/aclrk) 
+
+
+&return /* DEPV
+
+
+/**************************************************************************
+&routine USAGE
+/**************************************************************************
+
+  &severity &error &fail
+  &type USAGE: %AML$FILE% <yearfrom> {yearto} {aconc|ions} {options}
+  &type     Variables:  hno3 nh4 no3 so2 so4 nh3 | ca mg na k cl
+  &type     OPtions: newweights newpoints
+
+&return &error 
+
+/**************************************************************************
+&routine OPTIONS
+
+  &s options = [LOCASE %options%]
+
+    /* replace variables with any options 
+  &do opt &LIST [unquote %options%]
+    &ty Setting %opt%
+    &s [unquote [subst %opt% = ' '] ]
+  &end
+
+&return  
+
+
+
+
+

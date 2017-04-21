@@ -1,0 +1,259 @@
+/* TDEP_COMBINE.AML
+/* Creates weighted weekly dry deposition grids 
+/*  from measured concentrations and CMAQ
+/* Convert from kg-molecule/ha to kg-element/ha
+/*----------------------------------------------------------
+/* To Do: Use Adjusted CMAQ instead
+/*----------------------------------------------------------
+
+  &args yearfrom yearto options:REST
+  &severity &error &fail
+  
+  &if [null %yearto%]  &then 
+    &call USAGE
+ 
+/*----------------------------------------------------------
+/* Initial variables:
+/*----------------------------------------------------------
+
+  &s weekfrom = 1
+  &s weekto = 52
+  /* Only annual NH3 is used
+  &s varlist = hno3 nh4 no3 so2 so4 ca mg na k cl
+  &s home = /data/arc/tdep
+  
+  &call CONSTANTS
+  
+  &if ^ [null %options%]  &then 
+    &call OPTIONS
+  
+  &if [variable check] &then
+      &call CHECKGRIDS
+
+  &workspace %home%
+  
+  &do year := %yearfrom% &to %yearto%
+
+    &if ^ [exists %home%/combine/%year% -DIR] &then
+          &sys mkdir -p %home%/combine/%year%
+
+    &do week = %weekfrom% &to %weekto%
+      &type ***************************************************
+      &type WEEK=%year% %week% 
+      &type ***************************************************
+
+      &call DIRECTORIES
+      
+      &if ^ [exists %dir$comb% -WORK] &then
+          &sys arc createworkspace %dir$comb%
+
+      &do var &LIST %varlist%
+        &if [EXISTS arcerror -FILE] &then
+            &return &error
+
+        &ty WEEK=%year% %week% VAR=%var%
+
+        &call GRIDNAMES
+
+		/* CL and NH3 sometimes have too few points to interpolate
+       &if ^ [exists %pointcov% -cov ] or ( %var% cn nh3 ) or ( %var% = cl and %year% <= 2004 ) &then
+            &call POINT_TEST
+
+        &call DRYDEP
+
+      &end /* var
+
+    &end /* week
+  &end /*year
+
+&return
+
+/**************************************************************************
+&routine DRYDEP
+
+   &if [exists %dd$comb% -grid] &then
+	   &sys arc kill %dd$comb%
+    
+  &data arc grid
+     setcell MINOF
+     setwindow %xmin% %ymin% %xmax% %ymax%
+     /* Set the grid to CMAQ if weight is missing
+     /*   otherwise use the weighted values from the two grids
+     %dd$comb% = [value pct$%var%] * CON( ISNULL(%dd$meas%), %dd$cmaq%, (%dd$cmaq% * %wt$cmaq% + %dd$meas% * %wt$meas%) )
+     quit
+  &end
+
+  &if ^ [exists %dd$comb% -GRID] &then
+    &return &error ERROR: %dd$comb% wasnt successful
+
+&return
+
+
+/**************************************************************************
+&routine DIRECTORIES
+	  /* directory names
+      &s dir$cmaq = %home%/cmaq/ddadj/%year%/%week%
+      &s dir$meas = %home%/conc/%year%/%week%
+      &s dir$comb = %home%/combine/%year%/%week%
+
+&return
+
+/**************************************************************************
+&routine GRIDNAMES
+  /* Set gridnames for %var%
+  
+  &if %var% CN nh3 &then
+	&do
+		&s dir$cmaq = %home%/cmaq/ddep/%year%/%week%
+		&s wt$cmaq = 1     /* grid weighting for CMAQ grid
+		&s wt$meas = 0    /* grid weighting for measurement grid
+		&s dd$cmaq = %dir$cmaq%/%var%    /* CMAQ drydep grid
+		&s dd$meas = 0     /* drydep from concentration
+		&s dd$comb = %dir$comb%/%var%_dw      /* drydep from CMAQ and concentration
+	
+	&end
+  &else
+	&do
+		&s wt$cmaq = %dir$meas%/%var%wtq     /* grid weighting for CMAQ grid
+		&s wt$meas = %dir$meas%/%var%wtm     /* grid weighting for measurement grid
+		&s dd$cmaq = %dir$cmaq%/%var%    /* CMAQ drydep grid
+		&s dd$meas = %dir$meas%/%var%dw      /* drydep from concentration
+		&s dd$comb = %dir$comb%/%var%_dw      /* drydep from CMAQ and concentration
+	&end
+
+  &s pointcov = %dir$meas%/%var%cov
+  
+&return /* gridnames
+
+/**************************************************************************
+&routine POINT_TEST
+
+    /* Make sure pointcov has more than one point
+  &if [exists %pointcov% -cov] &then
+    &do
+      CURSOR test declare %pointcov% points ro
+      CURSOR test OPEN
+      &s numsites = %:test.aml$nsel%
+      CURSOR test REMOVE
+      &ty NUMSITES=%numsites%
+    &end /* do
+  &else
+    &s numsites = 0
+
+  &if %numsites% <= 2 &then
+    &do
+      &ty Setting grid weighting to 0 and 1
+      &s wt$meas = 0
+      &s wt$cmaq = 1
+      &s conc$meas = 0    
+      &s dd$meas = 0      
+    &end
+    
+&return /* POINT_TEST
+
+/**************************************************************************
+&routine CONSTANTS
+ 
+  &ty Setting constants 
+  
+  /* Set constants
+  &s cellsize = 12000 
+  &s power = 1  
+  &s fluxrate = [calc 0.00036 * 168] /* ug/m3 to kg/ha/week
+
+  /* elemental percentages
+  &s pct$nh3 = 0.823
+  &s pct$nh3d = 0.823
+  &s pct$nh3e = 0.823
+  &s pct$so2 = 0.5
+  &s pct$so4 = 0.333
+  &s pct$hno3 = 0.222
+  &s pct$no3 = 0.226
+  &s pct$nh4 = 0.777
+  &s pct$ca = 1
+  &s pct$mg = 1
+  &s pct$na = 1
+  &s pct$k = 1
+  &s pct$cl = 1
+
+  
+  /* Define the ALBERT boundaries for the grid 
+  &setvar xmin := -2400000.00
+  &setvar ymin :=   170000.00
+  &setvar xmax :=  2400000.00
+  &setvar ymax :=  3300000.00
+
+  &s gridmask    :=  %.src%/grids/us48   /* for cutting out US48
+
+&return /* CONSTANTS
+
+
+/**************************************************************************
+
+&routine CHECKGRIDS
+
+  &do year := %yearfrom% &to %yearto%
+    &ty 
+    &ty *********************************
+    &type Checking input grids for %year%
+
+    &do week = %weekfrom% &to %weekto%
+      &call DIRECTORIES
+      
+      &do var &LIST  %varlist%
+        &call GRIDNAMES
+
+		/* Check CMAQ grid
+        &if ^ [exists %dd$cmaq% -grid] &then 
+            &do 
+				&ty ERROR: Missing %dd$cmaq%
+				&s error = 1
+            &end
+		
+		/* Check measurement grids
+        &do grid &LIST  %dd$meas% %wt$meas% %wt$cmaq% 
+          &if ^ [exists %grid% -grid] and ( %var% <> nh3 and %year% < 2009 ) &then 
+            &do 
+				&ty ERROR: Missing %grid% for %var% %year%
+				&s error = 1
+            &end
+        &end /*grid
+		
+      &end /*var
+    &end /*week
+  &end /* year
+
+  &if [variable error] &then
+    &return &error 
+  &else 
+    &ty Input grids OK
+   
+   
+&return
+
+
+/**************************************************************************
+&routine OPTIONS
+
+  &ty Setting options in [quote %options%]
+
+  &setvar options = [LOCASE %options%]
+
+    /* replace variables with any options 
+  &do opt &LIST [unquote %options%]
+    &ty Setting %opt%
+    &s [unquote [subst %opt% = ' '] ]
+  &end
+
+&return  
+
+
+
+/**************************************************************************
+&routine USAGE
+
+  &type USAGE: %AML$FILE% <yearfrom> <yearto> {check} {options}
+  &type     Options:  weekfrom weekto newvd
+
+&return &error 
+
